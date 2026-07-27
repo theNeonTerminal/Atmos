@@ -1,83 +1,169 @@
+#include <Arduino.h>
+#include "ESP32_NOW.h"
+#include "WiFi.h"
+#include <esp_mac.h>
+#include <Adafruit_ADS1X15.h>
 
-/*
-    ESP Now - Broadcast Experiments
-    This here will send input form 1 butto and recive output for 2 leds
-*/
+#define ESPNOW_WIFI_CHANNEL 6  // must match on every unit
 
-#include <WiFi.h>
-#include <esp_now.h>
+Adafruit_ADS1015 ads;
 
-// Global Varibales, librariries, Objects here
+// ---------------------------------------------------------------
+// INTERNAL PLUMBING — you never need to touch anything below this
+// until the "==== YOUR CODE ====" marker.
+// ---------------------------------------------------------------
+class _BroadcastPeer : public ESP_NOW_Peer {
+public:
+  _BroadcastPeer(uint8_t channel, wifi_interface_t iface, const uint8_t *lmk)
+    : ESP_NOW_Peer(ESP_NOW.BROADCAST_ADDR, channel, iface, lmk) {}
 
-void formatMacAddress(const uint8_t *macAddr, char *buffer, int maxLength) {
-  snprintf(buffer, maxLength, "%02x:%02x:%02x:%02x:%02x:%02x",
-           macAddr[0], macAddr[1], macAddr[2],
-           macAddr[3], macAddr[4], macAddr[5]);
-}
-void receiveCallback(const uint8_t *macAddr, const uint8_t *data, int dataLen) {
-  char buffer[ESP_NOW_MAX_DATA_LEN + 1];
-  int msgLen = min(ESP_NOW_MAX_DATA_LEN, dataLen);
-  strncpy(buffer, (const char *)data, msgLen);
-  buffer[msgLen] = 0;
-  char macStr[18];
-  formatMacAddress(macAddr, macStr, 18);
-  Serial.printf("Received message from: %s - %s\n", macStr, buffer);
+  ~_BroadcastPeer() {
+    remove();
+  }
 
-  // Received Code logic
-  // Example if, to check for "on" comming: (strcmp("on", buffer) == 0)
-}
-void sentCallback(const uint8_t *macAddr, esp_now_send_status_t status) {
-  char macStr[18];
-  formatMacAddress(macAddr, macStr, 18);
+  bool begin() {
+    if (!ESP_NOW.begin() || !add()) {
+      Serial.println("Failed to initialize ESP-NOW or register broadcast peer");
+      return false;
+    }
+    return true;
+  }
 
-  Serial.print("Last Packet Sent to: ");
-  Serial.println(macStr);
+  bool sendMessage(const String &msg) {
+    return send((const uint8_t *)msg.c_str(), msg.length());
+  }
+};
 
-  Serial.print("Last Packet Send Status: ");
-  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
-}
-void broadcast(const String &message) {
-  // Give MAC address here
-  uint8_t broadcastAddress[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+static _BroadcastPeer _peer(ESPNOW_WIFI_CHANNEL, WIFI_IF_STA, nullptr);
 
-  esp_now_peer_info_t peerInfo = {};
-  memcpy(&peerInfo.peer_addr, broadcastAddress, 6);
+void _onEspNowRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len);
 
-  if (!esp_now_is_peer_exist(broadcastAddress)) esp_now_add_peer(&peerInfo);
-  esp_err_t result = esp_now_send(
-    broadcastAddress,
-    (const uint8_t *)message.c_str(),
-    message.length());
-
-  if (result == ESP_OK) Serial.println("Broadcast message success");
-  else if (result == ESP_ERR_ESPNOW_NOT_INIT) Serial.println("ESP-NOW not Init.");
-  else if (result == ESP_ERR_ESPNOW_ARG) Serial.println("Invalid Argument");
-  else if (result == ESP_ERR_ESPNOW_INTERNAL) Serial.println("Internal Error");
-  else if (result == ESP_ERR_ESPNOW_NO_MEM) Serial.println("ESP_ERR_ESPNOW_NO_MEM");
-  else if (result == ESP_ERR_ESPNOW_NOT_FOUND) Serial.println("Peer not found.");
-  else Serial.println("Unknown error");
-}
-
-void setup() {
-  Serial.begin(115200);
-  delay(1000);
+bool espNowBegin() {
   WiFi.mode(WIFI_STA);
+  WiFi.setChannel(ESPNOW_WIFI_CHANNEL);
+  while (!WiFi.STA.started()) delay(100);
+
   Serial.print("MAC Address: ");
   Serial.println(WiFi.macAddress());
-  WiFi.disconnect();
-  if (esp_now_init() == ESP_OK) {
-    Serial.println("ESP-NOW Init Success");
-    esp_now_register_recv_cb(receiveCallback);
-    esp_now_register_send_cb(sentCallback);
-  } else {
-    Serial.println("ESP-NOW Init Failed");
+
+  if (!_peer.begin()) return false;
+
+  esp_now_register_recv_cb(_onEspNowRecv);
+  return true;
+}
+
+bool espNowBroadcast(const String &msg) {
+  return _peer.sendMessage(msg);
+}
+
+void onEspNowMessage(const char *message);
+
+void _onEspNowRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  char buffer[ESP_NOW_MAX_DATA_LEN + 1];
+  int msgLen = min((int)ESP_NOW_MAX_DATA_LEN, len);
+  memcpy(buffer, data, msgLen);
+  buffer[msgLen] = 0;
+  onEspNowMessage(buffer);
+}
+
+void onEspNowMessage(const char *message) {
+  // Transmitter doesn't strictly need to do anything here, but we'll leave it
+  Serial.printf("Received: %s\n", message);
+}
+
+// ==========================================
+// ==== TRANSMITTER SETUP & LOOP CODE ====
+// ==========================================
+
+unsigned long lastSendTime = 0;
+const unsigned long sendInterval = 50;  // Send updates every 50ms
+
+// Define limits based on typical ADS1015 GAIN_ONE ranges (approx 0 to 1600+ depending on voltage)
+// We will cap the "upper limit" at 1600 for mapping calculations.
+const int LOWER_LIMIT = 0;
+const int UPPER_LIMIT = 1600;
+
+void setup(void) {
+  Serial.begin(115200);
+  ads.setGain(GAIN_ONE);
+
+  if (!espNowBegin()) {
+    Serial.println("ESP-NOW init failed, rebooting...");
     delay(3000);
     ESP.restart();
   }
+  if (!ads.begin()) {
+    Serial.println("Failed to initialize ADS.");
+    while (1);
+  }
 
-  // EXTRA Setup add here
+  Serial.println("Transmitter Setup DONE!");
 }
 
-void loop() {
-  // loop logic here
+void loop(void) {
+  // Read analog values
+  int16_t adc1 = ads.readADC_SingleEnded(3);  // Left/Right
+  int16_t adc3 = ads.readADC_SingleEnded(1);  // Forward/Backward
+  int16_t adc0 = ads.readADC_SingleEnded(2);  // Arm Mix (Right up + Left down / Left up + Right down)
+  int16_t adc2 = ads.readADC_SingleEnded(0);  // Both Arms Up/Down
+
+  // --- 1. MOVEMENT CALCULATION (ADC0 & ADC1) ---
+  // Default values
+  String driveDir = "STOP";
+  int pwm1 = 0;  // Speed component 1
+  int pwm2 = 0;  // Speed component 2
+
+  // Check Forward/Backward (Priority 1)
+  if (adc1 < 650) {
+    driveDir = "FWD";
+    // Scale 650 -> 0 to 0 -> 255 PWM
+    pwm1 = map(adc1, 650, LOWER_LIMIT, 0, 255);
+    pwm1 = constrain(pwm1, 0, 255);
+    pwm2 = pwm1;
+  } else if (adc1 > 900) {
+    driveDir = "BWD";
+    // Scale 900 -> 1600 to 0 -> 255 PWM
+    pwm1 = map(adc1, 900, UPPER_LIMIT, 0, 255);
+    pwm1 = constrain(pwm1, 0, 255);
+    pwm2 = pwm1;
+  }
+  // Check Left/Right (Priority 2, overrides forward/backward)
+  else if (adc0 > 900) {
+    driveDir = "LEFT";
+    pwm1 = map(adc0, 900, UPPER_LIMIT, 0, 255);
+    pwm1 = constrain(pwm1, 0, 255);
+    pwm2 = pwm1;
+  } else if (adc0 < 650) {
+    driveDir = "RIGHT";
+    pwm1 = map(adc0, 650, LOWER_LIMIT, 0, 255);
+    pwm1 = constrain(pwm1, 0, 255);
+    pwm2 = pwm1;
+  }
+
+  // --- 2. ARM CALCULATION (ADC2 & ADC3) ---
+  String armDir = "STAY";
+
+  // Check Both Arms (Priority 1)
+  if (adc3 < 650) {
+    armDir = "BOTH_DOWN";
+  } else if (adc3 > 900) {
+    armDir = "BOTH_UP";
+  }
+  // Check Split Arms (Priority 2)
+  else if (adc2 < 650) {
+    armDir = "R_UP_L_DN";
+  } else if (adc2 > 900) {
+    armDir = "L_UP_R_DN";
+  }
+
+  // --- 3. BROADCAST DATA ---
+  // Send data periodically to avoid spamming the bandwidth
+  if (millis() - lastSendTime >= sendInterval) {
+    lastSendTime = millis();
+
+    // Protocol Format: "DRIVE_DIR,PWM1,PWM2,ARM_DIR"
+    // Example: "FWD,180,180,STAY" or "LEFT,255,255,BOTH_UP"
+    String payload = driveDir + "," + String(pwm1) + "," + String(pwm2) + "," + armDir;
+    espNowBroadcast(payload);
+  }
 }
