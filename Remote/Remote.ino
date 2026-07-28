@@ -115,13 +115,13 @@ void loop(void) {
 
   // Check Forward/Backward (Priority 1)
   if (adc1 < 650) {
-    driveDir = "FWD";
+    driveDir = "BWD";
     // Scale 650 -> 0 to 0 -> 255 PWM
     pwm1 = map(adc1, 650, LOWER_LIMIT, 0, 255);
     pwm1 = constrain(pwm1, 0, 255);
     pwm2 = pwm1;
   } else if (adc1 > 900) {
-    driveDir = "BWD";
+    driveDir = "FWD";
     // Scale 900 -> 1600 to 0 -> 255 PWM
     pwm1 = map(adc1, 900, UPPER_LIMIT, 0, 255);
     pwm1 = constrain(pwm1, 0, 255);
