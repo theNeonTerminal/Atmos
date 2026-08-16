@@ -1,3 +1,6 @@
+# BASIC FACE DETECTION USING OPENCV AND MEDIAPIPE
+# Refer to requirments.txt for version details
+
 import cv2 as cv
 import mediapipe as mp
 import time as time
@@ -50,7 +53,8 @@ class FaceDetect():
     
 def main():
     cTime, pTime = 0,0
-    cap = cv.VideoCapture(0)
+    cap = cv.VideoCapture(0) #? Put Your ESP32 Cam URL HERE
+    # 0 means capture first webcam connected to your PC
     detector = FaceDetect()
 
     while True:
