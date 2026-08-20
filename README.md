@@ -2,6 +2,8 @@
 
 Atmos is a remote controlled rover-based remote controlled device meant to drive to a post disaster terrain to reach humans normally in difficult-to-reach areas. This was made for a competition and due to competition rules, our model is 21x23x14 cm in dimensions (not the most suitable for this purpose). If made a little bigger it has a lot more potential than our current model with no modifications
 
+<img src="./Atmos.jpg">
+
 ## Features
 
 - Highly modular (both chassis and electronics)
@@ -43,3 +45,27 @@ Atmos is a remote controlled rover-based remote controlled device meant to drive
 | PCB | --- | 2 |
 | Wires | --- | Required Amount |
 | Connectors | Required Connectors | --- |
+
+## Working in Brief
+
+The remote and Atmos share information wirelessly via ESP NOW protocol. The remote reads the Joystick input and sends it to Atmos and Atmos receives the following input and executes the action. Similarly, atmos also read the vales of the Gas sensor (MQ 135) and sends it to the remote via ESP NOW and the remote does the required processing.
+
+## Circuit Diagram
+
+<img src="Atmos/Atmos.png">
+
+> Atmos circuit diagram
+
+<img src="Atmos/diagram.png">
+
+> Atmos schematic diagram
+
+<hr>
+
+<img src="Remote/Remote.png">
+
+> Remote circuit Diagram
+
+<img src="Remote/diagram.png">
+
+> Remote schematic Diagram
