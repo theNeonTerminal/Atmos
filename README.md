@@ -4,7 +4,7 @@
 
 Built to meet strict competition rules ($21 \times 23 \times 14\text{ cm}$ size envelope), this prototype showcases a scalable architecture with immense potential for larger field deployments.
 
-![ATMOS Rover](./Atmos.jpg)
+![ATMOS Rover](./images/Atmos.jpg)
 
 ---
 
